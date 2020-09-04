@@ -11,7 +11,6 @@ import argparse, sys, time, pickle
 from seqload import loadSeqs, writeSeqs
 from seqtools import histsim
 
-
 import keras
 from keras.models import Model
 from keras import regularizers
