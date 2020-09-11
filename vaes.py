@@ -53,6 +53,7 @@ class TVD_Evaluation(keras.callbacks.Callback):
         self.vae = vae
 
         self.h = histsim(ref_seqs).astype(float)
+        self.h[-1] -= ref_seqs.shape[0]
         self.h = self.h/np.sum(self.h)
 
     def on_train_begin(self, logs={}):
@@ -62,6 +63,7 @@ class TVD_Evaluation(keras.callbacks.Callback):
         seqs = np.concatenate(list(self.vae.generate(1000)))
         print('Hamming computation...')
         h = histsim(seqs).astype(float)
+        h[-1] -= seqs.shape[0]
         h = h/np.sum(h)
         self.TVDs.append(np.sum(np.abs(self.h - h))/2)
         print("TVD:", self.TVDs[-1])
