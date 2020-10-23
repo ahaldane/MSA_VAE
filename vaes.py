@@ -20,7 +20,7 @@ from keras.objectives import categorical_crossentropy
 from keras.callbacks import EarlyStopping, CSVLogger
 from keras.layers.normalization import BatchNormalization
 
-#ALPHA="XILVAGMFYWEDQNHCRKSTPBZ-"[::-1]
+#ALPHA="XILVAGMFYWEDQNHCRKSTPBZ-"[::-1]  # alphabet in previous impls.
 ALPHA = "-ACDEFGHIKLMNPQRSTVWY"
 q = len(ALPHA)
 
@@ -48,6 +48,9 @@ class OneHot_Generator(keras.utils.Sequence) :
         return one_hot, one_hot
 
 class TVD_Evaluation(keras.callbacks.Callback):
+    """
+    Keras callback code to run after each epoch. Computes TVD if user specifies.
+    """
     def __init__(self, vae, ref_seqs):
         super().__init__()
         self.vae = vae
@@ -69,6 +72,10 @@ class TVD_Evaluation(keras.callbacks.Callback):
         print("TVD:", self.TVDs[-1])
 
 class Base_VAE:
+    """
+    Abstract Base class for all VAEs.  Does not specify layers, you must
+    subclass it and provide an _enc_dec_layers method.
+    """
     def __init__(self):
         self._TVDval = None
 
@@ -144,8 +151,9 @@ class Base_VAE:
 
     def _vae_loss(self, x, x_decoded_mean, **kwarg):
         zm, zlv = self.z_mean, self.z_log_var
-        # Original Church code has a prefactor of Lq, but it seems wrong...
-        # It may have been copied from the fchollet example code, also wrong
+        # Original Church code has a prefactor of Lq, which does not appear
+        # in the Kingman & welling VAE formulation and leads to non-unit var.
+        # It may have been copied from the fchollet example code
         #Lq = self.L*self.q
         #xent_loss = Lq * categorical_crossentropy(x,  x_decoded_mean)
         xent_loss = categorical_crossentropy(x, x_decoded_mean)
@@ -291,7 +299,7 @@ class Deep_VAE(Base_VAE):
 
         return enc_layers, dec_layers
 
-class VVAE(Base_VAE):
+class test_VAE(Base_VAE):
     def __init__(self):
         super().__init__()
 
@@ -311,7 +319,7 @@ class VVAE(Base_VAE):
 
         return enc_layers, dec_layers
 
-vaes = {'VVAE': VVAE, 'Church_VAE': Church_VAE, 'Deep_VAE': Deep_VAE}
+vaes = {'test_VAE': test_VAE, 'Church_VAE': Church_VAE, 'Deep_VAE': Deep_VAE}
 
 def loadVAE(name):
     with open('{}_param.pkl'.format(name), 'rb') as f:
@@ -341,6 +349,17 @@ def plot_performance(vae, hist, name):
         plt.legend();
         plt.savefig('Training_{}_{}.png'.format("TVD", name))
         plt.close()
+
+from matplotlib.colors import LinearSegmentedColormap
+cdict = {'red':   ((0.0,  0.0, 0.8),
+                   (1.0,  0.0, 0.0)),
+
+         'green': ((0.0,  0.0, 0.95),
+                   (1.0,  0.25, 1.0)),
+
+         'blue':  ((0.0,  0.0, 1.0),
+                   (1.0,  0.5, 1.0))}
+DarkBlue = LinearSegmentedColormap('DarkBlue', cdict)
 
 def main_plot_latent(name, args):
     parser = argparse.ArgumentParser()
@@ -381,39 +400,50 @@ def main_plot_latent(name, args):
     red = np.broadcast_to(np.array([1.,0, 0, 1]), (len(s), len(s), 4)).copy()
 
     fig = plt.figure(figsize=(12,12))
-    counter = 1
+    counter = 0
     for z1 in range(latent_dim):
         print('Var z{}: {}'.format(z1, np.var(m[:, z1])))
         for z2 in range(z1+1,latent_dim):
-            counter+=1
-            fig.add_subplot(latent_dim,latent_dim,counter)
+            counter += 1
+            fig.add_subplot(latent_dim-1,latent_dim-1,counter)
 
-            plt.scatter(m[:, z1], m[:, z2], c='b', alpha=0.01)
-            nn = (norm.pdf(X, m[0][z1], st[0][z1]) *
-                  norm.pdf(Y, m[0][z2], st[0][z2]))
+            #plt.scatter(m[:, z2], m[:, z1], c='b', alpha=0.01)
+            plt.hist2d(m[:, z2], m[:, z1],
+                       bins=np.linspace(-4,4,50), cmap=DarkBlue, cmin=1)
+            nn = (norm.pdf(X, m[0][z2], st[0][z2]) *
+                  norm.pdf(Y, m[0][z1], st[0][z1]))
             nn = nn/np.max(nn)/1.5
             red[:,:,3] = nn
-            plt.imshow(red, extent=(-5,5,-5,5), origin='lower')
+            #plt.imshow(red, extent=(-4,4,-4,4), origin='lower')
 
             ##wildtype in red
             #plt.scatter(m[0][z1], m[0][z2],c="r", alpha=1)
             # make 1std oval for wt
-            wtv = Ellipse((m[0][z1],  m[0][z2]),
-                          width=2*st[0][z1], height=2*st[0][z2],
-                          facecolor='none', edgecolor='red')
+            wtv = Ellipse((m[0][z2],  m[0][z1]),
+                          width=st[0][z2], height=st[0][z1],
+                          facecolor='none', edgecolor='red', lw=2)
             plt.gca().add_patch(wtv)
-            plt.xlim(-5,5)
-            plt.ylim(-5,5)
+            wtv = Ellipse((m[0][z2],  m[0][z1]),
+                          width=2*st[0][z2], height=2*st[0][z1],
+                          facecolor='none', edgecolor='red', lw=1)
+            plt.gca().add_patch(wtv)
+            plt.xlim(-4,4)
+            plt.ylim(-4,4)
 
             if z1 == 0:
-                plt.xlabel('z{}'.format(z2))
+                plt.xlabel('$z_{{{}}}$'.format(z2), fontsize=26, labelpad=26/2)
                 plt.gca().xaxis.set_label_position('top')
             if z2 == latent_dim -1:
-                plt.ylabel('z{}'.format(z1))
+                plt.ylabel('$z_{{{}}}$'.format(z1), fontsize=26)
                 plt.gca().yaxis.set_label_position('right')
-        counter += z1+2
 
+            plt.xticks([])
+            plt.yticks([])
+        counter += z1+1
+    
+    plt.subplots_adjust(right=0.92, bottom=0.01, left=0.01, top=0.92)
     plt.savefig('LatentTraining_{}.png'.format(name))
+    plt.savefig('LatentTraining_{}.eps'.format(name))
     plt.close()
 
     # special plot for l=1 case: vary the 1 dimension, make movie of output
@@ -433,7 +463,7 @@ def main_plot_latent(name, args):
             im = ax2.imshow(p.T, cmap='gray_r',
                             interpolation='nearest', animated=True)
             artists.append([im, zpt])
-            print("".join(ALPHA[c] for c in np.argmax(p, axis=1)))
+            #print("".join(ALPHA[c] for c in np.argmax(p, axis=1)))
         ani = animation.ArtistAnimation(fig, artists, interval=40, blit=True,
                                         repeat_delay=1000)
         #ani.save('vary_z1_{}.mp4'.format(name))
@@ -485,14 +515,14 @@ def main_energy(name, args):
     nlelbo = -vae.lELBO(seqs, n_samples=args.n_samples)
     logp = vae.logp(seqs, n_samples=args.n_samples)
 
-    np.save('nlelbo_{}', nlelbo)
-    np.save('logp_{}', logp)
+    np.save('nlelbo_{}'.format(name), nlelbo)
+    np.save('logp_{}'.format(name), logp)
 
-    plt.figure()
+    plt.figure(figsize=(6,4))
     plt.plot(nlelbo, logp, '.')
-    plt.xlabel('$-\log$ ELBO')
-    plt.ylabel('$\log p(x)$')
-    plt.savefig("energies_{}.png".format(name))
+    plt.xlabel('$-\log \mathrm{ELBO}(S)$')
+    plt.ylabel(r'$\log p_\theta(S)$')
+    plt.savefig("energies_{}.png".format(name), dpi=300)
     plt.close()
 
     if args.ref_energy:
@@ -517,12 +547,16 @@ def main_energy(name, args):
 def main_generate(name, args):
     parser = argparse.ArgumentParser()
     parser.add_argument('N', type=int)
+    parser.add_argument('-o')
     args = parser.parse_args(args)
     N = args.N
-
+    
+    fn = 'gen_{}_{}'.format(name, N)
+    if args.o:
+        fn = args.o
     vae = loadVAE(name)
 
-    with open('gen_{}_{}'.format(name, N), 'wb') as f:
+    with open(fn, 'wb') as f:
         for seqs in vae.generate(N):
             writeSeqs(f, seqs, alpha=ALPHA)
 
@@ -542,6 +576,7 @@ def main_train(name, args):
     print("L = {}".format(L))
 
     np.random.seed(42)
+    #np.random.seed(256)
     batch_size = args.batch_size
     #inner_dim = args.inner_dim
 
