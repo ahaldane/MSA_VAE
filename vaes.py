@@ -58,12 +58,13 @@ class TVD_Evaluation(keras.callbacks.Callback):
         self.h = histsim(ref_seqs).astype(float)
         self.h[-1] -= ref_seqs.shape[0]
         self.h = self.h/np.sum(self.h)
+        self.N = ref_seqs.shape[0]
 
     def on_train_begin(self, logs={}):
         self.TVDs = []
 
     def on_epoch_end(self, epoch, logs={}):
-        seqs = np.concatenate(list(self.vae.generate(1000)))
+        seqs = np.concatenate(list(self.vae.generate(self.N)))
         print('Hamming computation...')
         h = histsim(seqs).astype(float)
         h[-1] -= seqs.shape[0]
@@ -129,7 +130,7 @@ class Base_VAE:
 
     def save(self, name):
         with open('{}_param.pkl'.format(name), 'wb') as f:
-            d = (self.batch_size, self.L, self.q, self.latent_dim, 
+            d = (self.batch_size, self.L, self.q, self.latent_dim,
                  self.__class__.__name__)
             pickle.dump(d, f)
         self.vae.save(name + '_vae.k')
@@ -163,7 +164,8 @@ class Base_VAE:
     def getTVDlog(self):
         return None if self._TVDval is None else self._TVDval.TVDs
 
-    def train(self, epochs, train_seq, validation_seq, name=None, TVDseqs=None):
+    def train(self, epochs, train_seq, validation_seq, name=None, TVDseqs=None,
+              early_patience=None):
         # Comment from Church:
         # Potentially better results, but requires further hyperparameter tuning
         #optimizer = keras.optimizers.SGD(lr=0.005, momentum=0.001, decay=0.0,
@@ -173,7 +175,10 @@ class Base_VAE:
         x_train = OneHot_Generator(train_seq, self.batch_size)
         x_valid = OneHot_Generator(validation_seq, self.batch_size)
 
-        callbacks = [EarlyStopping(monitor='val_loss', patience=3), ]
+        callbacks = []
+        if early_patience is not None:
+            callbacks.append(EarlyStopping(monitor='val_loss',
+                                           patience=early_patience))
         if name is not None:
             callbacks.append(CSVLogger("{}_train_log.csv".format(name)))
         if TVDseqs is not None:
@@ -292,9 +297,9 @@ class Deep_VAE(Base_VAE):
         Lq = L*q
         depth = int(depth)
 
-        enc_layers = [Dense(Lq//(2**(d + 1)), activation='elu') 
+        enc_layers = [Dense(Lq//(2**(d + 1)), activation='elu')
                       for d in range(depth)]
-        dec_layers = [Dense(Lq//(2**(d + 1)), activation='elu') 
+        dec_layers = [Dense(Lq//(2**(d + 1)), activation='elu')
                        for d in range(depth)[::-1]]
 
         return enc_layers, dec_layers
@@ -364,6 +369,7 @@ DarkBlue = LinearSegmentedColormap('DarkBlue', cdict)
 def main_plot_latent(name, args):
     parser = argparse.ArgumentParser()
     parser.add_argument('seqs')
+    parser.add_argument('--save')
     args = parser.parse_args(args)
 
     seqs = loadSeqs(args.seqs, alpha=ALPHA)[0]
@@ -375,7 +381,10 @@ def main_plot_latent(name, args):
 
     m, lv = vae.encode(seqs)
     st = np.exp(lv/2)
-    
+
+    if args.save:
+        np.save(args.save, np.dstack([m, lv]))
+
     # make 1d distribution plots
     fig = plt.figure(figsize=(12,12))
     nx = max(latent_dim//2, 1)
@@ -392,58 +401,6 @@ def main_plot_latent(name, args):
         plt.title('Z{}, <z{}>_std={:.2f}'.format(z1, z1, np.std(m[:,z1])))
 
     plt.savefig('LatentTraining_1d_{}.png'.format(name))
-    plt.close()
-
-    # make 2d distribution plots
-    s = np.linspace(-5, 5, 200)
-    X, Y = np.meshgrid(s, s)
-    red = np.broadcast_to(np.array([1.,0, 0, 1]), (len(s), len(s), 4)).copy()
-
-    fig = plt.figure(figsize=(12,12))
-    counter = 0
-    for z1 in range(latent_dim):
-        print('Var z{}: {}'.format(z1, np.var(m[:, z1])))
-        for z2 in range(z1+1,latent_dim):
-            counter += 1
-            fig.add_subplot(latent_dim-1,latent_dim-1,counter)
-
-            #plt.scatter(m[:, z2], m[:, z1], c='b', alpha=0.01)
-            plt.hist2d(m[:, z2], m[:, z1],
-                       bins=np.linspace(-4,4,50), cmap=DarkBlue, cmin=1)
-            nn = (norm.pdf(X, m[0][z2], st[0][z2]) *
-                  norm.pdf(Y, m[0][z1], st[0][z1]))
-            nn = nn/np.max(nn)/1.5
-            red[:,:,3] = nn
-            #plt.imshow(red, extent=(-4,4,-4,4), origin='lower')
-
-            ##wildtype in red
-            #plt.scatter(m[0][z1], m[0][z2],c="r", alpha=1)
-            # make 1std oval for wt
-            wtv = Ellipse((m[0][z2],  m[0][z1]),
-                          width=st[0][z2], height=st[0][z1],
-                          facecolor='none', edgecolor='red', lw=2)
-            plt.gca().add_patch(wtv)
-            wtv = Ellipse((m[0][z2],  m[0][z1]),
-                          width=2*st[0][z2], height=2*st[0][z1],
-                          facecolor='none', edgecolor='red', lw=1)
-            plt.gca().add_patch(wtv)
-            plt.xlim(-4,4)
-            plt.ylim(-4,4)
-
-            if z1 == 0:
-                plt.xlabel('$z_{{{}}}$'.format(z2), fontsize=26, labelpad=26/2)
-                plt.gca().xaxis.set_label_position('top')
-            if z2 == latent_dim -1:
-                plt.ylabel('$z_{{{}}}$'.format(z1), fontsize=26)
-                plt.gca().yaxis.set_label_position('right')
-
-            plt.xticks([])
-            plt.yticks([])
-        counter += z1+1
-    
-    plt.subplots_adjust(right=0.92, bottom=0.01, left=0.01, top=0.92)
-    plt.savefig('LatentTraining_{}.png'.format(name))
-    plt.savefig('LatentTraining_{}.eps'.format(name))
     plt.close()
 
     # special plot for l=1 case: vary the 1 dimension, make movie of output
@@ -469,6 +426,63 @@ def main_plot_latent(name, args):
         #ani.save('vary_z1_{}.mp4'.format(name))
         ani.save('vary_z1_{}.gif'.format(name), dpi=80, writer='imagemagick')
         plt.close()
+        return
+
+    # make 2d distribution plots
+    r = 4
+    s = np.linspace(-r, r, 50)
+    X, Y = np.meshgrid(s, s)
+    red = np.broadcast_to(np.array([1.,0, 0, 1]), (len(s), len(s), 4)).copy()
+
+    fig = plt.figure(figsize=(12,12))
+    counter = 0
+    for z1 in range(latent_dim):
+        print('Var z{}: {}'.format(z1, np.var(m[:, z1])))
+        for z2 in range(z1+1,latent_dim):
+            counter += 1
+            fig.add_subplot(latent_dim-1,latent_dim-1,counter)
+
+            plt.hist2d(m[:, z2], m[:, z1],
+                       bins=np.linspace(-r,r,50), cmap=DarkBlue, cmin=1)
+
+            nn = (norm.pdf(X, m[0][z2], st[0][z2]) *
+                  norm.pdf(Y, m[0][z1], st[0][z1]))
+            nn = nn/np.max(nn)/1.5
+            red[:,:,3] = nn
+            plt.imshow(red, extent=(-r,r,-r,r), origin='lower', zorder=2)
+
+            ##wildtype in red
+            #plt.scatter(m[0][z1], m[0][z2],c="r", alpha=1)
+            # make 1std oval for wt
+            #wtv = Ellipse((m[0][z2],  m[0][z1]),
+            #              width=st[0][z2], height=st[0][z1],
+            #              facecolor='none', edgecolor='red', lw=2)
+            #plt.gca().add_patch(wtv)
+            #wtv = Ellipse((m[0][z2],  m[0][z1]),
+            #              width=2*st[0][z2], height=2*st[0][z1],
+            #              facecolor='none', edgecolor='red', lw=1)
+            #plt.gca().add_patch(wtv)
+            plt.xlim(-4,4)
+            plt.ylim(-4,4)
+
+            fs = 26
+            if latent_dim <= 7:
+                fs *= 2
+            if z1 == 0:
+                plt.xlabel('$z_{{{}}}$'.format(z2), fontsize=fs, labelpad=fs/2)
+                plt.gca().xaxis.set_label_position('top')
+            if z2 == latent_dim -1:
+                plt.ylabel('$z_{{{}}}$'.format(z1), fontsize=fs)
+                plt.gca().yaxis.set_label_position('right')
+
+            plt.xticks([])
+            plt.yticks([])
+        counter += z1+1
+
+    plt.subplots_adjust(right=0.92, bottom=0.01, left=0.01, top=0.92)
+    plt.savefig('LatentTraining_{}.png'.format(name))
+    plt.close()
+
 
 def main_seq_accuracy(name, args):
     parser = argparse.ArgumentParser()
@@ -550,7 +564,7 @@ def main_generate(name, args):
     parser.add_argument('-o')
     args = parser.parse_args(args)
     N = args.N
-    
+
     fn = 'gen_{}_{}'.format(name, N)
     if args.o:
         fn = args.o
@@ -566,6 +580,8 @@ def main_train(name, args):
     parser.add_argument('seqs')
     parser.add_argument('latent_dim', type=int)
     parser.add_argument('args', nargs='*')
+    parser.add_argument('--epochs', type=int, default=32)
+    parser.add_argument('--patience')
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--TVDseqs', action='store_true')
     args = parser.parse_args(args)
@@ -575,7 +591,7 @@ def main_train(name, args):
     N, L = seqs.shape
     print("L = {}".format(L))
 
-    np.random.seed(42)
+    #np.random.seed(42)
     #np.random.seed(256)
     batch_size = args.batch_size
     #inner_dim = args.inner_dim
@@ -588,17 +604,22 @@ def main_train(name, args):
     TVDseqs = None
     if args.TVDseqs:
         TVDseqs = val_seqs[:1000]
+    patience = None
+    if args.patience:
+        patience = int(args.patience)
 
     vae = vaes[args.vae_type]()
     vae.create_model(L, q, latent_dim, batch_size, *args.args)
     vae.summarize()
-    hist = vae.train(60, train_seqs, val_seqs, name=name, TVDseqs=TVDseqs)
+    hist = vae.train(args.epochs, train_seqs, val_seqs, name=name,
+                     TVDseqs=TVDseqs, early_patience=patience)
     vae.save(name)
     plot_performance(vae, hist, name)
 
 def main_TVD(name, args):
     parser = argparse.ArgumentParser()
     parser.add_argument('ref_seqs')
+    parser.add_argument('--save')
     args = parser.parse_args(args)
 
 
@@ -611,7 +632,11 @@ def main_TVD(name, args):
 
     seqs = np.concatenate(list(vae.generate(10000)))
     h = histsim(seqs).astype(float)
+    h[-1] = 0
     h = h/np.sum(h)
+
+    if args.save:
+        np.save(args.save, h)
 
     plt.figure()
     plt.plot(rh, label='ref')
