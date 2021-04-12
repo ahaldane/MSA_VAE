@@ -268,7 +268,7 @@ class Base_VAE:
             yield seqs
         print("\rGen {}/{}   ".format(N, N))
 
-class Church_VAE(Base_VAE):
+class sVAE(Base_VAE):
     def __init__(self):
         super().__init__()
 
@@ -324,7 +324,7 @@ class test_VAE(Base_VAE):
 
         return enc_layers, dec_layers
 
-vaes = {'test_VAE': test_VAE, 'Church_VAE': Church_VAE, 'Deep_VAE': Deep_VAE}
+vaes = {'test_VAE': test_VAE, 'sVAE': sVAE, 'Deep_VAE': Deep_VAE}
 
 def loadVAE(name):
     with open('{}_param.pkl'.format(name), 'rb') as f:
